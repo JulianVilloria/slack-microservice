@@ -12,8 +12,6 @@ socket_token = os.environ["SOCKET_TOKEN"]
 
 app = App(token=bot_token)
 
-mongo_client = get_mongo_client()
-
 
 @app.message("hello")
 def message_hello(message, say):
@@ -27,36 +25,23 @@ def hello_command(ack, body):
 
 
 @app.command("/form")
-def form_command(ack, body, command, say):
+def form_command(ack, body, command, say, client):
     ack()
-    say(
-        blocks=[
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"Hey there <@{command['user_name']}>!"},
-                "accessory": {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Open Modal Form"},
-                    "action_id": "button_click"
-                }
-            }
-        ],
-    )
-
-
-@app.action("button_click")
-def handle_button_click(ack, body, client):
-    ack()
+    mongo_client = get_mongo_client()
     db = mongo_client["slack"]
-    collection = db["fields"]
+    collection = db["forms"]
+    form = collection.find_one({"name": command["text"]})
 
-    fields = collection.find()
+    if not form:
+        say(f"Form {command['text']} not found.")
+        return
+    
     result = []
-    for field in fields:
+    for map in form["fields"]:
         result.append({
-            "key": field["key"],
-            "type": field["type"],
-            "value": field["value"],
+            "key": map["key"],
+            "type": map["type"],
+            "value": map["value"],
         })
 
     blocks = []
@@ -65,7 +50,7 @@ def handle_button_click(ack, body, client):
             blocks.append({
                 "type": "input",
                 "block_id": field["key"],
-                "label": {"type": "plain_text", "text": field["value"]},
+                "label": {"type": "plain_text", "text": field["key"]},
                 "element": {
                     "type": "plain_text_input",
                     "action_id": field["key"]
@@ -116,18 +101,34 @@ def handle_button_click(ack, body, client):
                     "placeholder": {"type": "plain_text", "text": field["value"]}
                 }
             })
+        elif field["type"] == "checkbox":
+            blocks.append({
+                "type": "input",
+                "block_id": field["key"],
+                "label": {"type": "plain_text", "text": field["key"]},
+                "optional": True,
+                "element": {
+                    "type": "checkboxes",
+                    "action_id": field["key"],
+                    "options": [
+                        {
+                            "text": {"type": "plain_text", "text": field["key"]},
+                            "value": field["value"]
+                        }
+                    ],
+                }
+            })
 
     client.views_open(
         trigger_id=body["trigger_id"],
         view={
             "type": "modal",
             "callback_id": "view_1",
-            "title": {"type": "plain_text", "text": "Default"},
+            "title": {"type": "plain_text", "text": form["name"]},
             "submit": {"type": "plain_text", "text": "Submit"},
             "blocks": blocks,
         }
     )
-
 
 # Handle a view_submission request
 @app.view("view_1")
